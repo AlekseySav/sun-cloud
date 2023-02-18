@@ -1,0 +1,344 @@
+#!/bin/bash
+
+meta="$HOME/suns-4-sem"
+repo="git@github.com:AlekseySav/suns-4-sem.git"
+
+gitignore="$(echo -e ".*\n_*\n\n!.gitignore\n")"
+
+filter="info caos diff bd conc eval calc icpc ad"
+explain="caos-акос diff-дифуры bd-БД conc-ТиПМС eval-Сложности calc-Матан icpc-icpc/ПП ad-АД"
+
+
+#
+# options
+#
+#   getopt          <name>
+#   setopt          <name> <value>
+#   getsubopt       <subject> <name>
+#   setsubopt       <subject> <name> <value>
+#   get [opt]       <name> <default>
+#   get [subopt]    <name> <default> <subject>
+#   default         <name> <value>
+
+getopt()
+{
+    if [ -e "$meta/$1" ]; then
+        read $1 <"$meta/$1"
+    fi
+}
+
+setopt()
+{
+    echo -n "$2" >"$meta/$1"
+}
+
+getsubopt()
+{
+    if [ -e "$meta/sub/$2@$1" ]; then
+        read $2 <"$meta/sub/$2@$1"
+    fi
+}
+
+setsubopt()
+{
+    echo -n "$3" >"$meta/sub/$2@$1"
+}
+
+get()
+{
+    echo -ne "$1 \e[2m($2)\e[0m: "; read x
+    if [[ "$x" == "" ]]; then
+        x="$2"
+    fi
+    if [[ $# == 2 ]]; then
+        setopt "$1" "$x"
+    else
+        setsubopt "$3" "$1" "$x"
+    fi
+}
+
+default()
+{
+    v=${!1}
+    if [[ "$v" == "" ]]; then
+        read $1 <<<"$2"
+    fi
+}
+
+#
+# checkers
+#
+#   die <msg>
+#   run <command> <argument-count> <argument-names> $@
+#   try <command> <arguments
+
+die()
+{
+    echo -e $@ >&2
+    exit 1
+}
+
+run()
+{
+    let n=$#-3
+    if [[ $n != $2 ]]; then
+        die "usage: sun $1 $3"
+    fi
+    cmd=$1
+    shift 3
+    $cmd "$@"
+}
+
+try()
+{
+    $@
+    if [[ $? != 0 ]]; then
+        exit 1
+    fi
+}
+
+ask()
+{
+    echo -n "$1? [Y/n] " >&2
+    read ans
+    if [[ $ans == "Y" || $ans == "y" ]]; then
+        echo y
+    fi
+}
+
+
+install()
+{
+    if [ -e /usr/bin/sun ]; then
+        if [[ $(ask "reinstall sun") != "y" ]]; then
+            echo "stop."
+            exit 1
+        fi
+    fi
+    chmod +x $0
+    cp $0 /usr/bin
+}
+
+update()
+{
+    if [[ -f ./sun || -d ./sun ]]; then
+        die "please remove ./sun file"
+    fi
+    try curl https://raw.githubusercontent.com/AlekseySav/sun-cloud/master/sun --output sun
+    echo updating...
+    rm -f /usr/bin/sun
+    chmod +x ./sun
+    mv ./sun /usr/bin
+}
+
+
+#
+# configuration editors
+#
+
+info()
+{
+    getopt name; getopt dir
+    echo -e "name: \e[33m$name\e[0m"
+    echo -e "dir: \e[33m$dir\e[0m"
+    echo -e "\e[2m    run \e[0m'sun init'\e[2m again to reconfigure\e[0m"
+    subjects=""
+    for name in $(ls $meta/sub/command@* | sed 's/^.*command@//g'); do
+        subjects="$subjects $name"
+    done
+    echo -e "subjects:\e[33m$subjects\e[0m"
+    echo -e "\e[2m    run \e[0m'sun del <subject-name>'\e[2m to erase subject locally\e[0m"
+}
+
+init()
+{
+    mkdir -p "$meta/sub"
+    getopt dir
+    getopt subjects
+    get name "$USER"
+    get dir "$PWD"
+
+    getopt alias
+    if [[ $alias == "" ]]; then
+        echo "alias sun-go=\". sun go\"" >>"$HOME/.bashrc"
+        setopt alias 1
+        echo "please reload terminal"
+    fi
+}
+
+
+#
+# subjects' stuff
+#
+
+check_conf()
+{
+    sub=$1
+    getsubopt $1 command
+    if [[ "$command" == "" ]]; then
+        die "\e[2mbad subject configuration, run \e[0m'sun reconf $sub'"
+    fi
+}
+
+reconf()
+{
+    sub=$1
+    getsubopt $sub command
+    default command "code ."
+    get command "$command" $sub
+}
+
+del()
+{
+    getopt dir
+    sub=$1
+    if [ -d "$dir/$sub" ]; then
+        if [[ $(ask "delete '$dir/$sub'") == "y" ]]; then
+            rm -rf $dir/$sub
+        fi
+    fi
+    rm -rf "$meta/sub/command@$sub"
+}
+
+autocommit()
+{
+    getopt name
+    getopt dir
+    if [[ "$SUN_SUBJECT" == "" ]]; then
+        die "sorry, it's not your code"
+    fi
+    sub="$SUN_SUBJECT"
+    cd "$dir/$sub"
+    git add *
+    git commit -a -m "$1"
+    git push -u origin "$name/$sub"
+}
+
+
+#
+# check filter
+#
+
+check_sub()
+{
+    for i in $filter; do
+        if [[ $i == "$sub" ]]; then
+            return 0
+        fi
+    done
+    echo "no such subject maaaaaaaaaan"
+    echo "existing subjects:"
+    for i in $explain; do
+        echo -e $(echo $i | sed 's/\(.*\)-\(.*\)/- \\e[33m\1\\e[0m\\t \2/')
+    done
+    return 1
+}
+
+#
+# sun-fetch
+#
+
+fetch()
+{
+    name=$2
+    sub=$1
+    check_sub
+    if [[ $? != 0 ]]; then
+        return
+    fi
+
+    getopt dir
+    base="$sub@$name"
+    if [[ -d "$dir/$base" ]]; then
+        cd "$dir/$base"
+        git pull
+    else
+        cd "$dir"
+        git clone "$repo" -b "$name/$sub" "$base"
+        if [[ $? != 0 ]]; then
+            return
+        fi
+        cd "$base"
+    fi
+    getsubopt $sub command
+    if [[ "$command" != "" ]]; then
+        eval $command
+    fi
+}
+
+
+#
+# sun-go
+#
+
+go()
+{
+    if [[ $1 == *"@"* ]]; then
+        fetch $(echo $1 | sed 's/\(.*\)@\(.*\)/\1 \2/')
+        return
+    fi
+
+    sub=$1
+    check_sub
+    if [[ $? != 0 ]]; then
+        return
+    fi
+
+    getopt name
+    getopt dir
+    dir="$dir/$sub"
+
+    # check if local version exists
+    if [ ! -d "$dir" ]; then
+        try mkdir -p "$dir"
+        reconf $sub
+        cd $dir
+        git init
+        git remote add origin "$repo"
+        git switch --orphan "$name/$sub"
+    else
+        check_conf $sub
+        cd $dir
+    fi
+    getsubopt $1 command
+
+    # check if remote version exists
+    ping github.com -c 1 >/dev/null 2>/dev/null
+    if [[ $? == 0 ]]; then
+        git fetch origin "$name/$sub"
+        if [[ $? != 0 ]]; then
+            echo "$gitignore" >.gitignore
+            git add .gitignore
+            git commit -a -m "setup"
+            git push -u origin "$name/$sub"
+        else
+            git merge "origin/$name/$sub"
+        fi
+    else
+        if [[ $(ask "not internet, skip synchronization") != "y" ]]; then
+            echo "stop."
+            exit
+        fi
+    fi
+
+    export SUN_SUBJECT=$sub
+    eval $command
+}
+
+cmd=$1; shift 1
+
+case $cmd in
+    "install") run install 0 "" "$@";;
+    "update") run update 0 "" "$@";;
+
+    "info") run info 0 "" "$@";;
+    "init") run init 0 "" "$@";;
+    "reconf") run reconf 1 "<subject>" "$@";;
+    "del") run del 1 "<name>" "$@";;
+
+    "go") run go 1 "<subject-name>" "$@";;
+    "autocommit") run autocommit 1 "<message>" "$@";;
+    "a") autocommit "sun-autocommit";;
+
+    *) die "options: install, update, info, init, reconf, del, autocommit, a"
+esac
